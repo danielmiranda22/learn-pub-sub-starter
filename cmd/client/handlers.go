@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/danmiranda227/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/danmiranda227/learn-pub-sub-starter/internal/pubsub"
@@ -47,23 +48,46 @@ func handlerMove(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.ArmyM
 	}
 }
 
-func handlerWar(gs *gamelogic.GameState) func(gamelogic.RecognitionOfWar) pubsub.Actype {
+func handlerWar(gs *gamelogic.GameState, ch *amqp.Channel) func(gamelogic.RecognitionOfWar) pubsub.Actype {
 	return func(rw gamelogic.RecognitionOfWar) pubsub.Actype {
 		defer fmt.Print("> ")
-		outcome, _, _ := gs.HandleWar(rw)
+		outcome, winner, loser := gs.HandleWar(rw)
+
+		var message string
 		switch outcome {
 		case gamelogic.WarOutcomeNotInvolved:
 			return pubsub.NackRequeue
 		case gamelogic.WarOutcomeNoUnits:
 			return pubsub.NackDiscard
 		case gamelogic.WarOutcomeOpponentWon:
-			return pubsub.Ack
+			message = fmt.Sprintf("%s won a war against %s", winner, loser)
 		case gamelogic.WarOutcomeYouWon:
-			return pubsub.Ack
+			message = fmt.Sprintf("%s won a war against %s", winner, loser)
 		case gamelogic.WarOutcomeDraw:
-			return pubsub.Ack
+			message = fmt.Sprintf("A war between %s and %s resulted in a draw", winner, loser)
+		default:
+			fmt.Println("error: unknown war outcome")
+			return pubsub.NackDiscard
 		}
-		fmt.Println("error: unknown war outcome")
-		return pubsub.NackDiscard
+
+		err := publishGameLog(ch, rw.Attacker.Username, message)
+		if err != nil {
+			fmt.Printf("error publishing game log: %v\n", err)
+			return pubsub.NackRequeue
+		}
+		return pubsub.Ack
 	}
+}
+
+func publishGameLog(ch *amqp.Channel, username, message string) error {
+	return pubsub.PublishGob(
+		ch,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug+"."+username,
+		routing.GameLog{
+			CurrentTime: time.Now(),
+			Message:     message,
+			Username:    username,
+		},
+	)
 }
