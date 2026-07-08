@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/danmiranda227/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/danmiranda227/learn-pub-sub-starter/internal/pubsub"
@@ -13,78 +11,71 @@ import (
 )
 
 func main() {
-	fmt.Println("Starting Peril server...")
+	const rabbitConnString = "amqp://guest:guest@localhost:5672/"
 
-	rabbitConnStr := "amqp://guest:guest@localhost:5672/"
-
-	conn, err := amqp.Dial(rabbitConnStr)
+	conn, err := amqp.Dial(rabbitConnString)
 	if err != nil {
-		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+		log.Fatalf("could not connect to RabbitMQ: %v", err)
 	}
 	defer conn.Close()
-	fmt.Println("Peril game server connected to RabbitMQ server")
+	fmt.Println("Peril game server connected to RabbitMQ!")
 
-	// wait for a signal to exit control-c
-	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
-	fmt.Println("Peril game server is shutting down.")
-
-	ch, err := conn.Channel()
+	publishCh, err := conn.Channel()
 	if err != nil {
-		log.Fatalf("Failed to open a channel: %v", err)
+		log.Fatalf("could not create channel: %v", err)
 	}
-	defer ch.Close()
 
-	err = pubsub.PublishJSON(
-		ch,
-		routing.ExchangePerilDirect,
-		routing.PauseKey,
-		routing.PlayingState{IsPaused: true},
+	_, queue, err := pubsub.DeclareAndBind(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.QueueDurable,
 	)
 	if err != nil {
-		log.Fatalf("Failed to publish JSON message: %v", err)
+		log.Fatalf("could not subscribe to pause: %v", err)
 	}
+	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
 
 	gamelogic.PrintServerHelp()
 
 	for {
-		input := gamelogic.GetInput()
-		if len(input) == 0 {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
 			continue
 		}
-		command := input[0]
-		switch command {
+		switch words[0] {
 		case "pause":
-			fmt.Println("Sending a pause message...")
+			fmt.Println("Publishing paused game state")
 			err = pubsub.PublishJSON(
-				ch,
+				publishCh,
 				routing.ExchangePerilDirect,
 				routing.PauseKey,
-				routing.PlayingState{IsPaused: true},
+				routing.PlayingState{
+					IsPaused: true,
+				},
 			)
 			if err != nil {
-				log.Fatalf("Failed to publish JSON message: %v", err)
+				log.Printf("could not publish time: %v", err)
 			}
 		case "resume":
-			fmt.Println("Sending a resume message...")
+			fmt.Println("Publishing resumes game state")
 			err = pubsub.PublishJSON(
-				ch,
+				publishCh,
 				routing.ExchangePerilDirect,
 				routing.PauseKey,
-				routing.PlayingState{IsPaused: false},
+				routing.PlayingState{
+					IsPaused: false,
+				},
 			)
 			if err != nil {
-				log.Fatalf("Failed to publish JSON message: %v", err)
+				log.Printf("could not publish time: %v", err)
 			}
 		case "quit":
-			fmt.Println("Quitting the server...")
+			log.Println("goodbye")
 			return
-		case "help":
-			gamelogic.PrintServerHelp()
 		default:
-			fmt.Println("Unknown command. Type 'help' for a list of commands.")
+			fmt.Println("unknown command")
 		}
 	}
 }
