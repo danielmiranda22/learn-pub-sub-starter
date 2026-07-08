@@ -37,6 +37,15 @@ func SubscribeJSON[T any](
 		return fmt.Errorf("could not declare and bind queue: %v", err)
 	}
 
+	err = ch.Qos(
+		10,     // prefetch count
+		0,      // prefetch size
+		false,  // global
+	)
+	if err != nil {
+		return fmt.Errorf("could not set QoS: %v", err)
+	}
+
 	msgs, err := ch.Consume(
 		queue.Name, // queue
 		"",         // consumer
@@ -91,6 +100,15 @@ func SubscribeGob[T any](
 	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
 	if err != nil {
 		return fmt.Errorf("could not declare and bind queue: %v", err)
+	}
+
+	err = ch.Qos(
+		10,     // prefetch count
+		0,      // prefetch size
+		false,  // global
+	)
+	if err != nil {
+		return fmt.Errorf("could not set QoS: %v", err)
 	}
 
 	msgs, err := ch.Consume(
